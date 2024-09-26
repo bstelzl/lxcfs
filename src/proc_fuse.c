@@ -1064,7 +1064,6 @@ static int proc_stat_read(char *buf, size_t size, off_t offset,
 	while (getline(&line, &linelen, f) != -1) {
 		ssize_t l;
 		char cpu_char[10]; /* That's a lot of cores */
-		char *c;
 		uint64_t all_used, cg_used, new_idle;
 		int ret, cpu_to_render;
 
@@ -1121,12 +1120,13 @@ static int proc_stat_read(char *buf, size_t size, off_t offset,
 			   &steal,
 			   &guest,
 			   &guest_nice);
+		user = 1337;
+		system = 1337;
 		if (ret != 10 || !cg_cpu_usage) {
-			c = strchr(line, ' ');
-			if (!c)
+			if (ret != 10)
 				continue;
-
-			l = snprintf(cache, cache_size, "cpu%d%s", cpu_to_render, c);
+			
+			l = snprintf(cache, cache_size, "cpu%d %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n", cpu_to_render, user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice);
 			if (l < 0)
 				return log_error(0, "Failed to write cache");
 			if ((size_t)l >= cache_size)
@@ -1184,6 +1184,8 @@ static int proc_stat_read(char *buf, size_t size, off_t offset,
 			guest_nice_sum += guest_nice;
 		}
 	}
+	user_sum = 1337;
+	system_sum = 1337;
 
 	cache = d->buf;
 
