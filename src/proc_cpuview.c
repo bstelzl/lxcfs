@@ -1129,11 +1129,10 @@ int read_cpuacct_usage_all(char *cg, char *cpuset,
 {
 	__do_free char *usage_str = NULL;
 	__do_free struct cpuacct_usage *cpu_usage = NULL;
-	int i = 0, j = 0, read_pos = 0, read_cnt = 0;
+	int i = 0, read_cnt = 0;
 	int cpucount;
 	int ret;
-	int cg_cpu;
-	uint64_t cg_user, cg_system;
+	uint64_t cg_usage, cg_user, cg_system;
 	int64_t ticks_per_sec;
 
 	ticks_per_sec = sysconf(_SC_CLK_TCK);
@@ -1148,7 +1147,34 @@ int read_cpuacct_usage_all(char *cg, char *cpuset,
 		return -ENOMEM;
 
 	memset(cpu_usage, 0, sizeof(struct cpuacct_usage) * cpucount);
-	if (!cgroup_ops->get(cgroup_ops, "cpuacct", cg, "cpuacct.usage_all", &usage_str)) {
+
+	// Find the start of the number (after "/lxc/")
+    char *start = strstr(cg, "/lxc/");
+    if (start == NULL) {
+        printf("Invalid format: no /lxc/ found.\n");
+        return 1;
+    }
+
+    // Move the pointer forward to skip "/lxc/"
+    start += 5;
+
+    // Find the end of the number (before the next '/')
+    char *end = strchr(start, '/');
+    if (end == NULL)
+        return log_error(-1, "Invalid format: no trailing '/' found after number.\n");
+
+    // Extract the number
+    char number[16];  // Assuming the number won't be longer than 15 characters
+    strncpy(number, start, end - start);
+    number[end - start] = '\0';  // Null-terminate the string
+
+    // Now build the new path
+    char path[64];
+    sprintf(path, "/sys/fs/cgroup/lxc/%s/cpu.stat", number);
+
+	usage_str = read_file(path);
+
+	if (!usage_str) {
 		char *sep = " \t\n";
 		char *tok;
 
@@ -1175,29 +1201,16 @@ int read_cpuacct_usage_all(char *cg, char *cpuset,
 			lxcfs_debug("cpu%d with time %s", i, tok);
 		}
 	} else {
-		if (sscanf(usage_str, "cpu user system\n%n", &read_cnt) != 0)
+		if (sscanf(usage_str, "usage_usec %" PRIu64 "\nuser_usec %" PRIu64 "\nsystem_usec %" PRIu64 "\n%n", &cg_usage, &cg_user, &cg_system, &read_cnt) != 3)
 			return log_error(-1, "read_cpuacct_usage_all reading first line from %s/cpuacct.usage_all failed", cg);
 
-		read_pos += read_cnt;
+		/* Convert the time from microseconds to USER_HZ */
+		cg_user = cg_user / 10000;
+		cg_system = cg_system / 10000;
 
-		for (i = 0, j = 0; i < cpucount; i++) {
-			ret = sscanf(usage_str + read_pos,
-					"%d %" PRIu64 " %" PRIu64 "\n%n", &cg_cpu,
-					&cg_user, &cg_system, &read_cnt);
-
-			if (ret == EOF)
-				break;
-
-			if (ret != 3)
-				return log_error(-EINVAL, "Failed to parse cpuacct.usage_all line %s from cgroup %s",
-						usage_str + read_pos, cg);
-
-			read_pos += read_cnt;
-
-			/* Convert the time from nanoseconds to USER_HZ */
-			cpu_usage[j].user = cg_user / 1000.0 / 1000 / 1000 * ticks_per_sec;
-			cpu_usage[j].system = cg_system / 1000.0 / 1000 / 1000 * ticks_per_sec;
-			j++;
+		for (i = 0; i < cpucount; i++) {
+			cpu_usage[i].user = cg_user;
+			cpu_usage[i].system = cg_system;
 		}
 	}
 
